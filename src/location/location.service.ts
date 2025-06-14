@@ -34,7 +34,6 @@ export class LocationService {
     user: User,
     createLocationDto: CreateLocationDto,
   ): Promise<Location> {
-
     const newLocation = this.locationRepository.create({
       ...createLocationDto,
       user,
@@ -61,7 +60,6 @@ export class LocationService {
     return savedLocation;
   }
 
-
   async findAllByUserId(userId: number): Promise<Location[]> {
     const locations = await this.locationRepository.find({
       where: { user: { idUser: userId } },
@@ -77,22 +75,26 @@ export class LocationService {
     return locations;
   }
 
-
+  /**
+   * Calcula la distancia, duración y la ruta codificada (polyline) entre dos puntos
+   * utilizando la API de Directions de Google Maps.
+   * @param calculateDto DTO con las coordenadas de origen y destino.
+   * @returns Un objeto con distancia, duración y la polyline de la ruta.
+   */
   async getDistance(
     calculateDto: CalculateDistanceDto,
-  ): Promise<{ distance: any; duration: any }> {
+  ): Promise<{ distance: any; duration: any; polyline: string }> {
     const { lat1, lon1, lat2, lon2 } = calculateDto;
     const apiKey = this.configService.googleMapsApiKey;
 
-    const url = `https://maps.googleapis.com/maps/api/distancematrix/json`;
+    const url = `https://maps.googleapis.com/maps/api/directions/json`;
 
     try {
       const response = await firstValueFrom(
         this.httpService.get(url, {
           params: {
-            destinations: `${lat2},${lon2}`,
-            origins: `${lat1},${lon1}`,
-            units: 'metric',
+            origin: `${lat1},${lon1}`,
+            destination: `${lat2},${lon2}`,
             key: apiKey,
           },
         }),
@@ -100,33 +102,31 @@ export class LocationService {
 
       const data = response.data;
 
-      if (data.status !== 'OK' || !data.rows[0].elements[0]) {
+      if (data.status !== 'OK' || !data.routes || data.routes.length === 0) {
         throw new InternalServerErrorException(
-          `Error de la API de Google: ${data.error_message || data.status}`,
+          `Error de la API de Google Directions: ${data.error_message || data.status
+          }`,
         );
       }
 
-      const element = data.rows[0].elements[0];
+      const route = data.routes[0];
+      const leg = route.legs[0];
 
-      if (element.status === 'ZERO_RESULTS') {
+      if (!leg || !leg.distance || !leg.duration) {
         throw new NotFoundException(
           'No se pudo encontrar una ruta entre los puntos proporcionados.',
         );
       }
 
-      if (element.status !== 'OK') {
-        throw new InternalServerErrorException(
-          `No se pudo calcular la ruta entre los puntos. Estado: ${element.status}`,
-        );
-      }
-
       return {
-        distance: element.distance,
-        duration: element.duration,
+        distance: leg.distance,
+        duration: leg.duration,
+        polyline: route.overview_polyline.points,
       };
+
     } catch (error) {
       console.error(
-        'Error al llamar a la API de Google Maps:',
+        'Error al llamar a la API de Google Maps (Directions):',
         error.response?.data || error.message,
       );
       throw new InternalServerErrorException(
